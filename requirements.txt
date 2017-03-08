@@ -1,0 +1,3 @@
+python-consul
+jinja2
+docopt
