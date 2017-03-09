@@ -44,12 +44,10 @@ class ConsulAPI(object):
                 sys.exit(1)
 
             except consul.base.ConsulException as e:
-                log.error("%s\n\t==> %s", e,
+                log.error("%s\n\t==> %s\n", e,
                           self.__class__.params_detail(dict_compact(kwargs))
                          )
-
-                if exit is not None:
-                    sys.exit(exit)
+                sys.exit(1)
 
         def __getattr__(self, method_name):
             '''Forward requests to API.
@@ -94,42 +92,88 @@ class Counsel(ConsulAPI):
 
     def __init__(self):
         super(Counsel, self).__init__()
-        self.query = Counsel.Query()
 
-    def display_service(self, service, limit=None, tags=None,
-                        dc=None, datacenters=None, onlypassing=None,
-                        node_filter=None, format='json'):
-        """Query catalog for the given service
-        """
+    @staticmethod
+    def jinja_filter(template, collection):
+        '''Applies Jinja filtering to the given collection
+           (which is technically list of contexts)
+        '''
+        rendered_collection = results.JinjaRender(template)
+        rendered_collection.render(collection, iterate=True)
+        return rendered_collection.result
 
+    def display_query_service(
+            self, service, limit=None, tags=None,
+            dc=None, datacenters=None, onlypassing=None,
+            filter=None, format='json'):
+        '''Displays query service
+        '''
+        rendered_collection = None
         res = self.query_service(service, limit=limit, tags=tags, 
                                  dc=dc, datacenters=datacenters,
                                  onlypassing=onlypassing)
 
-        if node_filter:
-            # Node jinja filter applied
-            mapped = results.JinjaRender(node_filter)
-            mapped.render(context=res['Nodes'], iterate=True)
-            res = mapped.result
+        # Filter query list, result contextes are stored in res['Nodes']
+        if filter:
+            rendered_collection = self.jinja_filter(template=filter,
+                                                    collection=res['Nodes'])
 
         formatter = results.Formatter(output_format=format)
-        formatter.output(res)
+        formatter.output(rendered_collection or res)
         return True
 
-    def query_service(self, service, tags=None, limit=None,
-                      dc=None, datacenters=None, onlypassing=None):
-        self.query.options(service,
-                           tags=tags,
-                           datacenters=datacenters,
-                           onlypassing=onlypassing)
 
-        ret = self.query.execute(dc=dc, limit=limit)
-        self.query.cleanup()
+    def display_health_service(
+            self, service, filter=None, format='json',
+            tag=None, dc=None, onlypassing=None):
+        '''Displays health service query
+        '''
+        rendered_collection = None
+        res = self.health_service(service,
+                                  tag=tag,
+                                  dc=dc,
+                                  onlypassing=onlypassing)
+        if filter:
+            rendered_collection = self.jinja_filter(template=filter, collection=res)
 
-        return ret
+        formatter = results.Formatter(output_format=format)
+        formatter.output(rendered_collection or res)
+        return True
+
+
+    @staticmethod
+    def query_service(service, tags=None, dc=None,
+                      datacenters=None, onlypassing=None, limit=None):
+        '''Invoke query service api calls
+        '''
+
+        query = Counsel.Query()
+        query.options(service,
+                      tags=tags,
+                      datacenters=datacenters,
+                      onlypassing=onlypassing)
+
+        # create, execute and cleanup the query
+        result = query.execute(dc=dc, limit=limit)
+        query.cleanup()
+
+        return result
+
+    @staticmethod
+    def health_service(service, onlypassing=None, tag=None, dc=None):
+        '''Invoke health service api call
+        '''
+        health = Counsel.Health()
+        result = health.service(service,
+                                onlypassing=onlypassing,
+                                tag=tag,
+                                dc=dc)
+        return result
 
 
     class Query(ConsulAPI):
+        '''Creates prepared service query
+        '''
 
         class CachedQuery(namedtuple('CachedQuery', 'uniqname id')):
             pass
@@ -139,6 +183,25 @@ class Counsel(ConsulAPI):
             # self.service_match = "${match(0)}"
             self._options = {}
             self.query_cache = {}
+
+        def execute(self, token=None, dc=None, near=None, limit=None):
+            ''' Perform prepared service query
+
+                /v1/query/<query or name>/execute
+            '''
+            result = None
+
+            # Prepared queries can be executed only up by name!
+
+            with ConsulAPI.Call() as api:
+                result = api.query.execute(
+                    self.query.uniqname,
+                    token=token,
+                    dc=dc,
+                    near=near,
+                    limit=limit)
+
+            return result
 
         def options(self, service_or_match,
                     tags=None,
@@ -158,11 +221,8 @@ class Counsel(ConsulAPI):
 
         @property
         def query(self):
-            ''' Retrieves query from in-mem cache if it exists otherwise
-                create consul "prepared" query and cache it.
-
-                uniqname is calculated based on query options checksum and used
-                as the cache id
+            '''Retrieves query from in-mem cache if it exists otherwise
+               create consul "prepared" query and cache it.
             '''
             uniqname = self.uniqname
 
@@ -197,24 +257,6 @@ class Counsel(ConsulAPI):
             sha256 = hashlib.sha256(serialized).hexdigest()
             return 'counsel-{}'.format(sha256)
 
-        def execute(self, dc=None, near=None, limit=None):
-            ''' Executes prepared query.
-                The executed queries are cached that's why after
-                finishing all the requests cleanup might be performed.
-            '''
-            result = None
-
-            # Prepared query templates can only be resolved up by name
-            # (during execution only)
-            with ConsulAPI.Call() as api:
-                result = api.query.execute(
-                    self.query.uniqname,
-                    dc=dc,
-                    near=near,
-                    limit=limit)
-
-            return result
-
         def cleanup(self):
             ''' Trim Counsel prepared queries
             '''
@@ -224,3 +266,36 @@ class Counsel(ConsulAPI):
                     self.query_cache.pop(query.uniqname)
 
             return True
+
+
+    class Health(ConsulAPI):
+        '''Creates service health query
+
+           Interface:
+               service(service, index=None, wait=None, passing=None,
+               tag=None, dc=None, near=None, token=None)
+        '''
+
+        def __init__(self):
+            super(self.__class__, self).__init__()
+
+        @staticmethod
+        def service(service, onlypassing=None, tag=None, dc=None, near=None, token=None):
+            '''Query service health
+
+               /v1/health/service/<service>
+            '''
+            result = None
+
+            # Prepared query templates can only be resolved up by name
+            # (during execution only)
+            with ConsulAPI.Call() as api:
+                _, result = api.health.service(
+                    service,
+                    passing=onlypassing,
+                    tag=tag,
+                    dc=dc,
+                    near=near,
+                    token=token)
+
+            return result
