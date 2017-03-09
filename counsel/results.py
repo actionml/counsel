@@ -1,5 +1,8 @@
 import json
 import jinja2
+import inspect
+
+import counsel.jinja_filters
 
 from counsel.log import log
 
@@ -34,7 +37,7 @@ class Render(object):
                     log.error('render failed: %s', e)
                     continue
 
-                if rendered:
+                if rendered != 'None':
                     res.append(rendered)
 
             self.result = res
@@ -51,13 +54,23 @@ class JinjaRender(Render):
 
     def __init__(self, template):
         try:
-            render_method = jinja2.Template(template).render
+            render_method = self.make_template(template).render
             super(self.__class__, self).__init__(render_method)
 
         except jinja2.exceptions.TemplateSyntaxError as e:
             log.error('jinja2 syntax error: %s', e)
 
         self.template = template
+
+    @staticmethod
+    def make_template(template):
+        '''Make template with custome filters preloaded
+        '''
+        env = jinja2.Environment()
+        filter_functions = inspect.getmembers(counsel.jinja_filters, inspect.isfunction)
+        for func_name, func in filter_functions:
+            env.filters[func_name] = func
+        return env.from_string(template)
 
 
 class Formatter(object):
