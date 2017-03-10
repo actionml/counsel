@@ -87,14 +87,14 @@ class Formatter(object):
     class Oneline(Base):
         def output(self, data):
             if isinstance(data, list):
-                return ' '.join(data)
+                return ' '.join(s for s in data if s)
             else:
                 return self.json(data)
 
     class Multiline(Base):
         def output(self, data):
             if isinstance(data, list):
-                res = "\n".join(s for s in data)
+                res = "\n".join(s for s in data if s)
                 return res
             else:
                 return self.json(data)
