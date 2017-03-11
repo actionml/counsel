@@ -37,7 +37,7 @@ class Render(object):
                     log.error('render failed: %s', e)
                     continue
 
-                if rendered != 'None':
+                if rendered != 'None' and rendered != '':
                     res.append(rendered)
 
             self.result = res
@@ -87,14 +87,14 @@ class Formatter(object):
     class Oneline(Base):
         def output(self, data):
             if isinstance(data, list):
-                return ' '.join(s for s in data if s)
+                return ' '.join(data)
             else:
                 return self.json(data)
 
     class Multiline(Base):
         def output(self, data):
             if isinstance(data, list):
-                res = "\n".join(s for s in data if s)
+                res = "\n".join(data)
                 return res
             else:
                 return self.json(data)
