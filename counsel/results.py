@@ -8,69 +8,77 @@ from counsel.log import log
 
 
 class Render(object):
-    '''Base Render class.
-       Transforms the given input (context) by calling render method.
+    '''Base Render class is used to transform data into another form.
+       For instance it's used as the base for JinjaRender which generates
+       a string (or a list of strings) from the Jinja template.
+
     '''
-    class NoRenderMethod(Exception):
-        pass
+    class Error(Exception): pass
+    class NoRenderMethod(Exception): pass
 
-    class RenderMethod(object):
-        def __init__(self, method=None):
-            self.method = method
-
-        def __call__(self, *args, **kwargs):
-            if not self.method:
-                raise Render.NoRenderMethod()
-            return self.method.__call__(*args, **kwargs)
-
-    def __init__(self, method=None):
-        self.render_method = self.RenderMethod(method)
+    def __init__(self, render_method=None):
+        self.render_method = render_method
         self.result = None
 
-    def render(self, context, iterate=False, **kwargs):
-        if iterate:
-            res = []
-            for ctx in context:
-                try:
-                    rendered = self.render_method(ctx, **kwargs)
-                except Exception as e:
-                    log.error('render failed: %s', e)
-                    continue
+    def render(self, data, **kwargs):
+        '''Invokes _render method for the data recursively (in case it's a list)
+        '''
 
-                if rendered != 'None' and rendered != '':
-                    res.append(rendered)
+        if isinstance(data, list):
+            combined = []
+            for context in data:
+                rendered = self._render(context, **kwargs)
+                if rendered:
+                    combined.append(rendered)
+            return combined
 
-            self.result = res
+        elif isinstance(data, dict):
+            return self._render(data, **kwargs)
         else:
-            try:
-                self.result = self.render_method(context, **kwargs)
-            except Exception as e:
-                log.error('render failed: %s', e)
+            raise Render.Error("Expects dict or list, %s provided" %
+                               type(self))
 
-        return True
+    def _render(self, data, **kwargs):
+        '''Invokes render_method
+        '''
+        if not self.render_method or not callable(self.render_method):
+            raise Render.NoRenderMethod('render_method has to be a function')
+
+        try:
+            return self.render_method(data, **kwargs)
+        except Exception as e:
+            log.error('render failed: %s', e)
 
 
 class JinjaRender(Render):
+    '''Renders template for an object or a collection of objects.
+       Each object is used as the Jinja context.
+    '''
 
     def __init__(self, template):
+        self.template = template
+
+        render_method = JinjaRender.get_render_method(template)
+        super(self.__class__, self).__init__(render_method)
+
+    @staticmethod
+    def get_render_method(template):
+        '''Make template with custom filters preloaded
+        '''
         try:
-            render_method = self.make_template(template).render
-            super(self.__class__, self).__init__(render_method)
+            render_method = None
+            jinja = jinja2.Environment()
+            filter_functions = inspect.getmembers(counsel.jinja_filters,
+                                                  inspect.isfunction)
+            for func_name, func in filter_functions:
+                jinja.filters[func_name] = func
+
+            render_method = jinja.from_string(template).render
 
         except jinja2.exceptions.TemplateSyntaxError as e:
             log.error('jinja2 syntax error: %s', e)
 
-        self.template = template
-
-    @staticmethod
-    def make_template(template):
-        '''Make template with custome filters preloaded
-        '''
-        env = jinja2.Environment()
-        filter_functions = inspect.getmembers(counsel.jinja_filters, inspect.isfunction)
-        for func_name, func in filter_functions:
-            env.filters[func_name] = func
-        return env.from_string(template)
+        return render_method
 
 
 class Formatter(object):
@@ -109,5 +117,5 @@ class Formatter(object):
         self.formatter = self.FACTORY[output_format]()
 
     def output(self, data):
-        if data is not None:
+        if data:
             print(self.formatter.output(data))

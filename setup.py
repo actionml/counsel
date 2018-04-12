@@ -14,7 +14,7 @@ install_reqs, dep_links = fetch_requirements(REQUIREMENTS_FILE)
 apply_vagrant_workaround()
 setup(
     name='counsel',
-    version='0.1.1',
+    version='0.1.2',
     description='CLI utility for Consul',
     author='Denis Baryshev',
     author_email='dennybaa@gmail.com',

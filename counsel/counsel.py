@@ -94,13 +94,11 @@ class Counsel(ConsulAPI):
         super(Counsel, self).__init__()
 
     @staticmethod
-    def jinja_filter(template, collection):
-        '''Applies Jinja filtering to the given collection
-           (which is technically list of contexts)
+    def jinja_filter(template, data):
+        '''Jinja filter applies jinja transformation for to the API reponse object.
         '''
-        rendered_collection = results.JinjaRender(template)
-        rendered_collection.render(collection, iterate=True)
-        return rendered_collection.result
+        jinja = results.JinjaRender(template)
+        return jinja.render(data)
 
     def display_query_service(
             self, service, limit=None, tags=None,
@@ -108,38 +106,33 @@ class Counsel(ConsulAPI):
             filter=None, format='json'):
         '''Displays query service
         '''
-        rendered_collection = None
-        res = self.query_service(service, limit=limit, tags=tags, 
-                                 dc=dc, datacenters=datacenters,
-                                 onlypassing=onlypassing)
+        result = self.query_service(service, limit=limit, tags=tags,
+                                    dc=dc, datacenters=datacenters,
+                                    onlypassing=onlypassing)
 
-        # Filter query list, result contextes are stored in res['Nodes']
+        # Filter query list, result contexts are stored in res['Nodes']
         if filter:
-            rendered_collection = self.jinja_filter(template=filter,
-                                                    collection=res['Nodes'])
+            data = result['Nodes']
+            result = self.jinja_filter(filter, data)
 
+        # output the result
         formatter = results.Formatter(output_format=format)
-        formatter.output(rendered_collection or res)
-        return True
-
+        formatter.output(result)
 
     def display_health_service(
             self, service, filter=None, format='json',
             tag=None, dc=None, onlypassing=None):
         '''Displays health service query
         '''
-        rendered_collection = None
-        res = self.health_service(service,
-                                  tag=tag,
-                                  dc=dc,
-                                  onlypassing=onlypassing)
+        result = self.health_service(service,
+                                     tag=tag,
+                                     dc=dc,
+                                     onlypassing=onlypassing)
         if filter:
-            rendered_collection = self.jinja_filter(template=filter, collection=res)
+            result = self.jinja_filter(filter, result)
 
         formatter = results.Formatter(output_format=format)
-        formatter.output(rendered_collection or res)
-        return True
-
+        formatter.output(result)
 
     @staticmethod
     def query_service(service, tags=None, dc=None,
